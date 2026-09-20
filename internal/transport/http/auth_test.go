@@ -210,7 +210,7 @@ func TestAuthEndpointErrorMapping(t *testing.T) {
 }
 
 func TestAuthRoutesAndHealth(t *testing.T) {
-	router := httptransport.NewRouter(authStub{}, testLogger())
+	router := httptransport.NewRouter(authStub{}, nil, testLogger())
 	for _, path := range []string{"/api/user/register", "/api/user/login"} {
 		for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
 			recorder := httptest.NewRecorder()

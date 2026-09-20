@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	orderapplication "diplom/internal/application/order"
 	application "diplom/internal/application/user"
 	"diplom/internal/infrastructure/password"
 	"diplom/internal/infrastructure/postgres"
@@ -23,7 +24,8 @@ func TestRegistrationAndLoginIntegration(t *testing.T) {
 	}
 	service := application.NewService(postgres.NewUserRepository(pool), password.NewHasher(), nil)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	router := httptransport.NewRouter(service, logger)
+	orders := orderapplication.NewService(postgres.NewOrderRepository(pool), nil)
+	router := httptransport.NewRouter(service, orders, logger)
 	protected := httptransport.RequireAuth(service, logger, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httptransport.UserID(r.Context())
 		if !ok {
