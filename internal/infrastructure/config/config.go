@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -30,7 +31,7 @@ func Load(args []string) (Config, error) {
 	var configPath string
 	flags := flag.NewFlagSet("gophermart", flag.ContinueOnError)
 	flags.StringVar(&flagConfig.RunAddress, "a", defaultRunAddress, "HTTP listen address (RUN_ADDRESS)")
-	flags.StringVar(&flagConfig.DatabaseURI, "d", "", "reserved PostgreSQL URI (DATABASE_URI); adapter not implemented")
+	flags.StringVar(&flagConfig.DatabaseURI, "d", "", "required PostgreSQL URI (DATABASE_URI)")
 	flags.StringVar(&flagConfig.AccrualSystemAddress, "r", "", "reserved accrual URL (ACCRUAL_SYSTEM_ADDRESS); adapter not implemented")
 	flags.StringVar(&configPath, "c", defaultConfigPath, "YAML configuration file")
 	if err := flags.Parse(args); err != nil {
@@ -65,6 +66,9 @@ func Load(args []string) (Config, error) {
 	}
 	if value := os.Getenv("ACCRUAL_SYSTEM_ADDRESS"); value != "" {
 		cfg.AccrualSystemAddress = value
+	}
+	if strings.TrimSpace(cfg.DatabaseURI) == "" {
+		return Config{}, fmt.Errorf("invalid DATABASE_URI/-d/database_uri: PostgreSQL URI is required")
 	}
 
 	_, port, err := net.SplitHostPort(cfg.RunAddress)
