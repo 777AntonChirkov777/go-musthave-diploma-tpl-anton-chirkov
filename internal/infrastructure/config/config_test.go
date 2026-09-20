@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"strings"
 	"testing"
 
 	"diplom/internal/infrastructure/config"
@@ -11,7 +12,7 @@ import (
 
 func TestLoadSources(t *testing.T) {
 	const yamlConfig = "run_address: 'file.local:9000'\ndatabase_uri: 'postgres://file/db'\naccrual_system_address: 'http://file.local:9001'\n"
-	defaults := config.Config{RunAddress: "localhost:8080"}
+	defaults := config.Config{RunAddress: "localhost:8080", DatabaseURI: "postgres://env/db"}
 	fromFile := config.Config{
 		RunAddress:           "file.local:9000",
 		DatabaseURI:          "postgres://file/db",
@@ -25,7 +26,8 @@ func TestLoadSources(t *testing.T) {
 		want  config.Config
 	}{
 		{
-			name: "defaults without optional file",
+			name: "default address without optional file",
+			env:  map[string]string{"DATABASE_URI": "postgres://env/db"},
 			want: defaults,
 		},
 		{
@@ -68,10 +70,10 @@ func TestLoadSources(t *testing.T) {
 			want:  config.Config{RunAddress: "env.local:9200", DatabaseURI: "postgres://flag/db", AccrualSystemAddress: "http://file.local:9001"},
 		},
 		{
-			name:  "empty explicit flags clear file values",
+			name:  "empty explicit flag clears optional file value",
 			files: map[string]string{"config.yaml": yamlConfig},
-			args:  []string{"-d=", "-r="},
-			want:  config.Config{RunAddress: "file.local:9000"},
+			args:  []string{"-r="},
+			want:  config.Config{RunAddress: "file.local:9000", DatabaseURI: "postgres://file/db"},
 		},
 		{
 			name:  "empty environment falls back to flags",
@@ -96,35 +98,52 @@ func TestLoadSources(t *testing.T) {
 		{
 			name:  "empty file keeps defaults",
 			files: map[string]string{"config.yaml": ""},
+			env:   map[string]string{"DATABASE_URI": "postgres://env/db"},
 			want:  defaults,
 		},
 		{
 			name:  "comment only file keeps defaults",
 			files: map[string]string{"config.yaml": "# Local configuration\n\n"},
+			env:   map[string]string{"DATABASE_URI": "postgres://env/db"},
 			want:  defaults,
 		},
 		{
 			name:  "null fields keep defaults",
 			files: map[string]string{"config.yaml": "run_address: null\ndatabase_uri: ~\naccrual_system_address:\n"},
+			env:   map[string]string{"DATABASE_URI": "postgres://env/db"},
 			want:  defaults,
 		},
 		{
 			name:  "null document keeps defaults",
 			files: map[string]string{"config.yaml": "null\n"},
+			env:   map[string]string{"DATABASE_URI": "postgres://env/db"},
 			want:  defaults,
 		},
 		{
 			name:  "address validation follows flag override",
 			files: map[string]string{"config.yaml": "run_address: invalid\n"},
-			args:  []string{"-a", "flag.local:9100"},
-			want:  config.Config{RunAddress: "flag.local:9100"},
+			args:  []string{"-a", "flag.local:9100", "-d", "postgres://flag/db"},
+			want:  config.Config{RunAddress: "flag.local:9100", DatabaseURI: "postgres://flag/db"},
 		},
 		{
 			name:  "address validation follows environment override",
 			files: map[string]string{"config.yaml": "run_address: invalid\n"},
 			args:  []string{"-a", "also-invalid"},
-			env:   map[string]string{"RUN_ADDRESS": "env.local:9200"},
-			want:  config.Config{RunAddress: "env.local:9200"},
+			env:   map[string]string{"RUN_ADDRESS": "env.local:9200", "DATABASE_URI": "postgres://env/db"},
+			want:  config.Config{RunAddress: "env.local:9200", DatabaseURI: "postgres://env/db"},
+		},
+		{
+			name:  "database validation follows flag override",
+			files: map[string]string{"config.yaml": "database_uri: ''\n"},
+			args:  []string{"-d", "postgres://flag/db"},
+			want:  config.Config{RunAddress: "localhost:8080", DatabaseURI: "postgres://flag/db"},
+		},
+		{
+			name:  "database validation follows environment override",
+			files: map[string]string{"config.yaml": "database_uri: ''\n"},
+			args:  []string{"-d="},
+			env:   map[string]string{"DATABASE_URI": "postgres://env/db"},
+			want:  defaults,
 		},
 	}
 	for _, tt := range tests {
@@ -166,8 +185,40 @@ func TestLoadRejectsInvalidInput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			prepareConfig(t, tt.files)
+			t.Setenv("DATABASE_URI", "postgres://test/db")
 			if _, err := config.Load(tt.args); err == nil {
 				t.Fatal("Load() succeeded, want an error")
+			}
+		})
+	}
+}
+
+func TestLoadRequiresDatabaseURI(t *testing.T) {
+	tests := []struct {
+		name  string
+		files map[string]string
+		args  []string
+		env   string
+	}{
+		{name: "missing URI"},
+		{name: "empty explicit flag", args: []string{"-d="}},
+		{name: "whitespace explicit flag", args: []string{"-d", " \t\n"}},
+		{name: "empty file URI", files: map[string]string{"config.yaml": "database_uri: ''\n"}},
+		{name: "whitespace file URI", files: map[string]string{"config.yaml": "database_uri: '   '\n"}},
+		{name: "null file URI", files: map[string]string{"config.yaml": "database_uri: null\n"}},
+		{name: "empty flag overrides file URI", files: map[string]string{"config.yaml": "database_uri: 'postgres://file/db'\n"}, args: []string{"-d="}},
+		{name: "whitespace environment overrides flag and file", files: map[string]string{"config.yaml": "database_uri: 'postgres://file/db'\n"}, args: []string{"-d", "postgres://flag/db"}, env: " \t\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prepareConfig(t, tt.files)
+			t.Setenv("DATABASE_URI", tt.env)
+			_, err := config.Load(tt.args)
+			if err == nil {
+				t.Fatal("Load() succeeded without a PostgreSQL URI")
+			}
+			if !strings.Contains(err.Error(), "DATABASE_URI/-d/database_uri") {
+				t.Fatalf("Load() error = %v, want the required database configuration sources", err)
 			}
 		})
 	}
@@ -206,6 +257,7 @@ func TestLoadRunAddress(t *testing.T) {
 		t.Run(tt.address, func(t *testing.T) {
 			prepareConfig(t, nil)
 			t.Setenv("RUN_ADDRESS", tt.address)
+			t.Setenv("DATABASE_URI", "postgres://test/db")
 			got, err := config.Load(nil)
 			if (err == nil) != tt.valid {
 				t.Fatalf("Load() error = %v, want valid = %v", err, tt.valid)
