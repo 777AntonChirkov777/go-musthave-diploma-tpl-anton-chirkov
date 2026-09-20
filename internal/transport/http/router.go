@@ -13,10 +13,11 @@ type AuthService interface {
 	SessionAuthenticator
 }
 
-func NewRouter(users AuthService, logger *slog.Logger) http.Handler {
+func NewRouter(users AuthService, orders handler.SubmitOrderService, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /health", handler.HealthHandler{})
 	mux.Handle("POST /api/user/register", handler.NewRegisterHandler(users, logger))
 	mux.Handle("POST /api/user/login", handler.NewLoginHandler(users, logger))
+	mux.Handle("POST /api/user/orders", RequireAuth(users, logger, handler.NewSubmitOrderHandler(orders, logger)))
 	return mux
 }

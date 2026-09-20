@@ -18,12 +18,9 @@ type SessionAuthenticator interface {
 	Authenticate(context.Context, string) (domain.ID, error)
 }
 
-type userIDKey struct{}
-
 // UserID returns the identity verified by RequireAuth.
 func UserID(ctx context.Context) (domain.ID, bool) {
-	id, ok := ctx.Value(userIDKey{}).(domain.ID)
-	return id, ok
+	return handler.UserID(ctx)
 }
 
 // RequireAuth authenticates a bearer token or the session cookie for protected routes.
@@ -38,7 +35,7 @@ func RequireAuth(users SessionAuthenticator, logger *slog.Logger, next http.Hand
 			var id domain.ID
 			id, err = users.Authenticate(r.Context(), token)
 			if err == nil {
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userIDKey{}, id)))
+				next.ServeHTTP(w, r.WithContext(handler.WithUserID(r.Context(), id)))
 				return
 			}
 		}

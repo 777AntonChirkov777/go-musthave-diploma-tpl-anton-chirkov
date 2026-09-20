@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	orderapplication "diplom/internal/application/order"
 	userapplication "diplom/internal/application/user"
 	"diplom/internal/infrastructure/config"
 	"diplom/internal/infrastructure/password"
@@ -20,14 +21,16 @@ import (
 )
 
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
-	users, closeRepository, err := newUserService(ctx, cfg)
+	pool, err := newPostgresPool(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer pool.Close()
+	users := userapplication.NewService(postgres.NewUserRepository(pool), password.NewHasher(), nil)
+	orders := orderapplication.NewService(postgres.NewOrderRepository(pool), nil)
 	server := &http.Server{
 		Addr:              cfg.RunAddress,
-		Handler:           httptransport.NewRouter(users, logger),
+		Handler:           httptransport.NewRouter(users, orders, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -68,23 +71,23 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	return nil
 }
 
-func newUserService(ctx context.Context, cfg config.Config) (*userapplication.Service, func(), error) {
+func newPostgresPool(ctx context.Context, cfg config.Config) (*pgxpool.Pool, error) {
 	if strings.TrimSpace(cfg.DatabaseURI) == "" {
-		return nil, nil, errors.New("PostgreSQL connection is required: set DATABASE_URI, -d, or database_uri in YAML")
+		return nil, errors.New("PostgreSQL connection is required: set DATABASE_URI, -d, or database_uri in YAML")
 	}
 	setupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(setupCtx, cfg.DatabaseURI)
 	if err != nil {
-		return nil, nil, fmt.Errorf("configure PostgreSQL: %w", err)
+		return nil, fmt.Errorf("configure PostgreSQL: %w", err)
 	}
 	if err := pool.Ping(setupCtx); err != nil {
 		pool.Close()
-		return nil, nil, fmt.Errorf("connect PostgreSQL: %w", err)
+		return nil, fmt.Errorf("connect PostgreSQL: %w", err)
 	}
 	if err := postgres.Migrate(setupCtx, pool); err != nil {
 		pool.Close()
-		return nil, nil, fmt.Errorf("migrate PostgreSQL: %w", err)
+		return nil, fmt.Errorf("migrate PostgreSQL: %w", err)
 	}
-	return userapplication.NewService(postgres.NewUserRepository(pool), password.NewHasher(), nil), pool.Close, nil
+	return pool, nil
 }
