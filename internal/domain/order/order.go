@@ -20,6 +20,7 @@ const (
 var (
 	ErrAlreadyExists     = errors.New("order already exists")
 	ErrInvalidUploadedAt = errors.New("order upload time must not be zero")
+	ErrInvalidStatus     = errors.New("invalid order status")
 )
 
 type Order struct {
@@ -30,19 +31,28 @@ type Order struct {
 }
 
 func New(number Number, userID user.ID, uploadedAt time.Time) (Order, error) {
+	return Restore(number, userID, StatusNew, uploadedAt)
+}
+
+func Restore(number Number, userID user.ID, status Status, uploadedAt time.Time) (Order, error) {
 	if _, err := ParseNumber(string(number)); err != nil {
-		return Order{}, fmt.Errorf("create order: %w", err)
+		return Order{}, fmt.Errorf("restore order: %w", err)
 	}
 	if err := user.ValidateID(userID); err != nil {
-		return Order{}, fmt.Errorf("create order: %w", err)
+		return Order{}, fmt.Errorf("restore order: %w", err)
 	}
 	if uploadedAt.IsZero() {
 		return Order{}, ErrInvalidUploadedAt
 	}
+	switch status {
+	case StatusNew, StatusProcessing, StatusInvalid, StatusProcessed:
+	default:
+		return Order{}, ErrInvalidStatus
+	}
 	return Order{
 		number:     number,
 		userID:     userID,
-		status:     StatusNew,
+		status:     status,
 		uploadedAt: uploadedAt,
 	}, nil
 }

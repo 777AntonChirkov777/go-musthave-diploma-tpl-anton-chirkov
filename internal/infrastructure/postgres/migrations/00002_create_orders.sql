@@ -1,7 +1,5 @@
 -- +goose Up
 CREATE TABLE orders (
-    -- Index the fixed-size digest: a valid order number can exceed the maximum
-    -- size of a PostgreSQL btree entry. The repository also compares the number.
     number_hash BYTEA PRIMARY KEY CHECK (octet_length(number_hash) = 32),
     number TEXT NOT NULL CHECK (number ~ '^[0-9]+$'),
     user_id TEXT NOT NULL REFERENCES users(id),
