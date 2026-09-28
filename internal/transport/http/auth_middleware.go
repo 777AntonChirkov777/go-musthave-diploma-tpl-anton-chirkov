@@ -18,12 +18,9 @@ type SessionAuthenticator interface {
 	Authenticate(context.Context, string) (domain.ID, error)
 }
 
-type userIDKey struct{}
-
 // UserID returns the identity verified by RequireAuth.
 func UserID(ctx context.Context) (domain.ID, bool) {
-	id, ok := ctx.Value(userIDKey{}).(domain.ID)
-	return id, ok
+	return handler.UserID(ctx)
 }
 
 // RequireAuth authenticates a bearer token or the session cookie for protected routes.
@@ -38,7 +35,7 @@ func RequireAuth(users SessionAuthenticator, logger *slog.Logger, next http.Hand
 			var id domain.ID
 			id, err = users.Authenticate(r.Context(), token)
 			if err == nil {
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userIDKey{}, id)))
+				next.ServeHTTP(w, r.WithContext(handler.WithUserID(r.Context(), id)))
 				return
 			}
 		}
@@ -52,19 +49,23 @@ func RequireAuth(users SessionAuthenticator, logger *slog.Logger, next http.Hand
 }
 
 func requestToken(r *http.Request) (string, error) {
-	if values, present := r.Header["Authorization"]; present {
-		if len(values) != 1 {
-			return "", application.ErrUnauthenticated
-		}
-		parts := strings.Fields(values[0])
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			return "", application.ErrUnauthenticated
-		}
-		return parts[1], nil
+	if token, ok := bearerToken(r.Header["Authorization"]); ok {
+		return token, nil
 	}
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil || cookie.Value == "" {
 		return "", application.ErrUnauthenticated
 	}
 	return cookie.Value, nil
+}
+
+func bearerToken(values []string) (string, bool) {
+	if len(values) != 1 {
+		return "", false
+	}
+	parts := strings.Fields(values[0])
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", false
+	}
+	return parts[1], true
 }

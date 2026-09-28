@@ -2,6 +2,8 @@ package postgres_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +11,8 @@ import (
 	"diplom/internal/infrastructure/postgres"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 )
 
 func TestMigrateTracksVersionOnceAcrossConcurrentStarts(t *testing.T) {
@@ -50,13 +54,13 @@ func TestMigrateTracksVersionOnceAcrossConcurrentStarts(t *testing.T) {
 			t.Fatalf("repeat migration: %v", err)
 		}
 	}
-	assertGooseVersionOne(t, ctx, pools[0])
-	var users, sessions int
-	if err := pools[0].QueryRow(ctx, "SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM user_sessions)").Scan(&users, &sessions); err != nil {
-		t.Fatalf("read migrated user and session tables: %v", err)
+	assertGooseVersions(t, ctx, pools[0])
+	var users, sessions, orders int
+	if err := pools[0].QueryRow(ctx, "SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM user_sessions), (SELECT count(*) FROM orders)").Scan(&users, &sessions, &orders); err != nil {
+		t.Fatalf("read migrated user, session, and order tables: %v", err)
 	}
-	if users != 0 || sessions != 0 {
-		t.Fatalf("migration created unexpected user data: %d users, %d sessions", users, sessions)
+	if users != 0 || sessions != 0 || orders != 0 {
+		t.Fatalf("migration created unexpected data: %d users, %d sessions, %d orders", users, sessions, orders)
 	}
 }
 
@@ -106,7 +110,8 @@ func TestMigratePreservesExistingPreGooseData(t *testing.T) {
 			t.Fatalf("upgrade existing schema: %v", err)
 		}
 	}
-	assertGooseVersionOne(t, ctx, pool)
+	assertGooseVersions(t, ctx, pool)
+	assertOrderCount(t, pool, 0)
 	storedUser, err := repository.GetByLogin(ctx, user.Login())
 	if err != nil {
 		t.Fatalf("read preexisting user after migration: %v", err)
@@ -133,15 +138,63 @@ func TestMigratePreservesExistingPreGooseData(t *testing.T) {
 	}
 }
 
-func assertGooseVersionOne(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
-	t.Helper()
-	var records, applied int
-	if err := pool.QueryRow(ctx,
-		"SELECT count(*), count(*) FILTER (WHERE is_applied) FROM goose_db_version WHERE version_id = 1",
-	).Scan(&records, &applied); err != nil {
-		t.Fatalf("read goose migration history: %v", err)
+func TestMigrateAddsAccrualWithoutChangingExistingOrders(t *testing.T) {
+	pool := isolatedDatabase(t)()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Recreate the previously deployed version before inserting an existing order.
+	db := stdlib.OpenDBFromPool(pool)
+	defer db.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, os.DirFS("migrations"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if records != 1 || applied != 1 {
-		t.Fatalf("goose version 1 has %d records and %d applied records, want 1 of each", records, applied)
+	if _, err := provider.UpTo(ctx, 2); err != nil {
+		t.Fatalf("create version 2 schema: %v", err)
+	}
+	owner := registerOrderOwner(t, pool, "existing-owner")
+	want := newOrder(t, "0012345678903", owner, time.Date(2026, 9, 20, 12, 0, 0, 123456000, time.UTC))
+	hash := sha256.Sum256([]byte(want.Number()))
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO orders (number_hash, number, user_id, status, uploaded_at)
+		VALUES ($1, $2, $3, $4, $5)`,
+		hash[:], string(want.Number()), string(want.UserID()), string(want.Status()), want.UploadedAt(),
+	); err != nil {
+		t.Fatalf("insert existing order: %v", err)
+	}
+
+	for range 2 {
+		if err := postgres.Migrate(ctx, pool); err != nil {
+			t.Fatalf("upgrade order schema: %v", err)
+		}
+	}
+	assertGooseVersions(t, ctx, pool)
+	assertOrderCount(t, pool, 1)
+	repository := postgres.NewOrderRepository(pool)
+	got, err := repository.GetByNumber(ctx, want.Number())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOrderEqual(t, got, want)
+	listed, err := repository.ListByUser(ctx, owner)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("migrated orders = %v, error = %v, want one order", listed, err)
+	}
+	assertOrderEqual(t, listed[0], want)
+}
+
+func assertGooseVersions(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	for _, version := range []int{1, 2, 3} {
+		var records, applied int
+		if err := pool.QueryRow(ctx,
+			"SELECT count(*), count(*) FILTER (WHERE is_applied) FROM goose_db_version WHERE version_id = $1", version,
+		).Scan(&records, &applied); err != nil {
+			t.Fatalf("read goose migration history: %v", err)
+		}
+		if records != 1 || applied != 1 {
+			t.Fatalf("goose version %d has %d records and %d applied records, want 1 of each", version, records, applied)
+		}
 	}
 }

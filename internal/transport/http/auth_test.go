@@ -104,14 +104,10 @@ func TestAuthEndpointsRejectInvalidRequests(t *testing.T) {
 		{name: "null password", body: `{"login":"alice","password":null}`, contentType: "application/json"},
 		{name: "numeric login", body: `{"login":123,"password":"secret"}`, contentType: "application/json"},
 		{name: "boolean password", body: `{"login":"alice","password":true}`, contentType: "application/json"},
-		{name: "unknown field", body: `{"login":"alice","password":"secret","admin":true}`, contentType: "application/json"},
 		{name: "multiple documents", body: `{"login":"alice","password":"secret"}{}`, contentType: "application/json"},
 		{name: "trailing garbage", body: `{"login":"alice","password":"secret"}garbage`, contentType: "application/json"},
 		{name: "body too large", body: `{"login":"alice","password":"` + strings.Repeat("x", 64<<10) + `"}`, contentType: "application/json"},
 		{name: "oversize trailing whitespace", body: `{"login":"alice","password":"secret"}` + strings.Repeat(" ", 64<<10), contentType: "application/json"},
-		{name: "missing content type", body: `{"login":"alice","password":"secret"}`},
-		{name: "wrong content type", body: `{"login":"alice","password":"secret"}`, contentType: "text/plain"},
-		{name: "malformed content type", body: `{"login":"alice","password":"secret"}`, contentType: "application/json; charset"},
 	}
 	for _, path := range []string{"/api/user/register", "/api/user/login"} {
 		t.Run(path, func(t *testing.T) {
@@ -128,6 +124,47 @@ func TestAuthEndpointsRejectInvalidRequests(t *testing.T) {
 					}
 					if len(response.Result().Cookies()) != 0 || response.Header().Get("Authorization") != "" {
 						t.Error("rejected request received authentication credentials")
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestAuthEndpointsAcceptBodyRegardlessOfContentTypeAndUnknownFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		contentType string
+	}{
+		{name: "unknown field", body: `{"login":"alice","password":"secret","admin":true}`, contentType: "application/json"},
+		{name: "missing content type", body: `{"login":"alice","password":"secret"}`},
+		{name: "wrong content type", body: `{"login":"alice","password":"secret"}`, contentType: "text/plain"},
+		{name: "form content type", body: `{"login":"alice","password":"secret"}`, contentType: "application/x-www-form-urlencoded"},
+		{name: "malformed content type", body: `{"login":"alice","password":"secret"}`, contentType: "application/json; charset"},
+	}
+	for _, path := range []string{"/api/user/register", "/api/user/login"} {
+		t.Run(path, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					calls := 0
+					issue := func(_ context.Context, login, password string) (application.Authenticated, error) {
+						calls++
+						if login != "alice" || password != "secret" {
+							t.Errorf("login = %q, password = %q; want alice/secret", login, password)
+						}
+						return application.Authenticated{UserID: "user-1", Token: "opaque-token", ExpiresAt: time.Now().Add(time.Hour)}, nil
+					}
+					handler := credentialsHandler(t, path, issue)
+					response := credentialsRequest(handler, path, tt.body, tt.contentType)
+					if response.Code != http.StatusOK || calls != 1 {
+						t.Fatalf("status = %d, calls = %d, want 200 and one service call; body = %q", response.Code, calls, response.Body.String())
+					}
+					if cookie := sessionCookie(t, response); cookie.Value != "opaque-token" {
+						t.Errorf("session cookie = %q, want opaque-token", cookie.Value)
+					}
+					if got := response.Header().Get("Authorization"); got != "Bearer opaque-token" {
+						t.Errorf("Authorization = %q, want Bearer opaque-token", got)
 					}
 				})
 			}
@@ -210,7 +247,7 @@ func TestAuthEndpointErrorMapping(t *testing.T) {
 }
 
 func TestAuthRoutesAndHealth(t *testing.T) {
-	router := httptransport.NewRouter(authStub{}, testLogger())
+	router := httptransport.NewRouter(authStub{}, nil, testLogger())
 	for _, path := range []string{"/api/user/register", "/api/user/login"} {
 		for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
 			recorder := httptest.NewRecorder()
@@ -241,12 +278,16 @@ func TestRequireAuth(t *testing.T) {
 		{name: "bearer", header: "Bearer header-token", wantToken: "header-token", wantStatus: http.StatusOK},
 		{name: "case insensitive bearer scheme", header: "bearer header-token", wantToken: "header-token", wantStatus: http.StatusOK},
 		{name: "bearer takes precedence", header: "Bearer header-token", cookie: "cookie-token", wantToken: "header-token", wantStatus: http.StatusOK},
-		{name: "empty header does not fall back to cookie", headers: []string{""}, cookie: "cookie-token", wantStatus: http.StatusUnauthorized},
-		{name: "duplicate headers", headers: []string{"Bearer token-1", "Bearer token-2"}, cookie: "cookie-token", wantStatus: http.StatusUnauthorized},
+		{name: "empty header falls back to cookie", headers: []string{""}, cookie: "cookie-token", wantToken: "cookie-token", wantStatus: http.StatusOK},
+		{name: "duplicate headers fall back to cookie", headers: []string{"Bearer token-1", "Bearer token-2"}, cookie: "cookie-token", wantToken: "cookie-token", wantStatus: http.StatusOK},
+		{name: "duplicate headers without cookie", headers: []string{"Bearer token-1", "Bearer token-2"}, wantStatus: http.StatusUnauthorized},
 		{name: "missing credentials", wantStatus: http.StatusUnauthorized},
-		{name: "wrong scheme", header: "Basic abc", cookie: "cookie-token", wantStatus: http.StatusUnauthorized},
+		{name: "wrong scheme falls back to cookie", header: "Basic abc", cookie: "cookie-token", wantToken: "cookie-token", wantStatus: http.StatusOK},
+		{name: "wrong scheme without cookie", header: "Basic abc", wantStatus: http.StatusUnauthorized},
 		{name: "missing bearer value", header: "Bearer", wantStatus: http.StatusUnauthorized},
 		{name: "extra bearer value", header: "Bearer token extra", wantStatus: http.StatusUnauthorized},
+		{name: "missing bearer value falls back to cookie", header: "Bearer", cookie: "cookie-token", wantToken: "cookie-token", wantStatus: http.StatusOK},
+		{name: "extra bearer value falls back to cookie", header: "Bearer token extra", cookie: "cookie-token", wantToken: "cookie-token", wantStatus: http.StatusOK},
 		{name: "invalid session", cookie: "invalid-token", wantToken: "invalid-token", err: application.ErrUnauthenticated, wantStatus: http.StatusUnauthorized},
 		{name: "invalid bearer with valid cookie", header: "Bearer invalid-token", cookie: "cookie-token", wantToken: "invalid-token", err: application.ErrUnauthenticated, wantStatus: http.StatusUnauthorized},
 		{name: "backend failure", cookie: "cookie-token", wantToken: "cookie-token", err: errors.New("private-backend-secret"), wantStatus: http.StatusInternalServerError},

@@ -18,6 +18,7 @@ var (
 type Repository interface {
 	Add(context.Context, domain.Order) error
 	GetByNumber(context.Context, domain.Number) (domain.Order, error)
+	// ListByUser returns only the user's orders, newest uploads first.
 	ListByUser(context.Context, user.ID) ([]domain.Order, error)
 }
 

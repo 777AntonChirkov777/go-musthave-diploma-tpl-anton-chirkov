@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	application "diplom/internal/application/user"
 	domain "diplom/internal/domain/user"
@@ -114,6 +115,14 @@ func (r *UserRepository) GetSession(ctx context.Context, tokenHash string) (appl
 	}
 	session.UserID = domain.ID(userID)
 	return session, nil
+}
+
+func (r *UserRepository) DeleteExpiredSessions(ctx context.Context, now time.Time) (int64, error) {
+	result, err := r.pool.Exec(ctx, "DELETE FROM user_sessions WHERE expires_at <= $1", now)
+	if err != nil {
+		return 0, fmt.Errorf("delete expired sessions: %w", err)
+	}
+	return result.RowsAffected(), nil
 }
 
 func validateSession(session application.Session) error {

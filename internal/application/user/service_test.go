@@ -273,6 +273,44 @@ func TestLoginAndAuthenticationPropagateInternalFailures(t *testing.T) {
 	}
 }
 
+func TestPurgeExpiredSessionsUsesServiceClock(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	var got time.Time
+	service := application.NewService(stubRepository{deleteExp: func(_ context.Context, before time.Time) (int64, error) {
+		got = before
+		return 3, nil
+	}}, testHasher{}, func() time.Time { return now })
+	deleted, err := service.PurgeExpiredSessions(context.Background())
+	if err != nil || deleted != 3 {
+		t.Fatalf("PurgeExpiredSessions = %d, %v; want 3, nil", deleted, err)
+	}
+	if !got.Equal(now) {
+		t.Fatalf("repository received %v, want service clock %v", got, now)
+	}
+}
+
+func TestPurgeExpiredSessionsWrapsRepositoryFailure(t *testing.T) {
+	failure := errors.New("database unavailable")
+	service := application.NewService(stubRepository{deleteExp: func(context.Context, time.Time) (int64, error) {
+		return 0, failure
+	}}, testHasher{}, nil)
+	if deleted, err := service.PurgeExpiredSessions(context.Background()); deleted != 0 || !errors.Is(err, failure) {
+		t.Fatalf("PurgeExpiredSessions = %d, %v; want 0 and wrapped failure", deleted, err)
+	}
+}
+
+func TestPurgeExpiredSessionsHonoursCancelledContext(t *testing.T) {
+	service := application.NewService(stubRepository{deleteExp: func(context.Context, time.Time) (int64, error) {
+		t.Error("cancelled purge reached the repository")
+		return 0, nil
+	}}, testHasher{}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := service.PurgeExpiredSessions(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PurgeExpiredSessions error = %v, want context.Canceled", err)
+	}
+}
+
 type testHasher struct{ err error }
 
 func (h testHasher) Hash(password string) (string, error) { return "hash:" + password, h.err }
@@ -285,6 +323,7 @@ type stubRepository struct {
 	getUser    func(context.Context, string) (domain.User, error)
 	addSession func(context.Context, application.Session) error
 	getSession func(context.Context, string) (application.Session, error)
+	deleteExp  func(context.Context, time.Time) (int64, error)
 }
 
 func (r stubRepository) Register(ctx context.Context, u domain.User, session application.Session) error {
@@ -298,4 +337,7 @@ func (r stubRepository) AddSession(ctx context.Context, session application.Sess
 }
 func (r stubRepository) GetSession(ctx context.Context, hash string) (application.Session, error) {
 	return r.getSession(ctx, hash)
+}
+func (r stubRepository) DeleteExpiredSessions(ctx context.Context, now time.Time) (int64, error) {
+	return r.deleteExp(ctx, now)
 }
