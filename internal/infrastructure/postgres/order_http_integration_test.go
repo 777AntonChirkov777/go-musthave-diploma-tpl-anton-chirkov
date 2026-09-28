@@ -83,12 +83,15 @@ func TestOrderSubmissionIntegration(t *testing.T) {
 	}{
 		{"unauthenticated", "", "text/plain", number, http.StatusUnauthorized},
 		{"forged token", "Bearer forged-token", "text/plain", number, http.StatusUnauthorized},
-		{"missing content type", aliceAuthorization, "", number, http.StatusBadRequest},
-		{"JSON content type", aliceAuthorization, "application/json", number, http.StatusBadRequest},
-		{"malformed content type", aliceAuthorization, "text/plain; charset", number, http.StatusBadRequest},
+		{"missing content type", aliceAuthorization, "", number, http.StatusOK},
+		{"JSON content type", aliceAuthorization, "application/json", number, http.StatusOK},
+		{"malformed content type", aliceAuthorization, "text/plain; charset", number, http.StatusOK},
 		{"empty body", aliceAuthorization, "text/plain", "", http.StatusBadRequest},
+		{"whitespace only body", aliceAuthorization, "text/plain", " \t \r\n", http.StatusBadRequest},
 		{"non-digit", aliceAuthorization, "text/plain", "1234567890x", http.StatusUnprocessableEntity},
-		{"surrounding whitespace", aliceAuthorization, "text/plain", " " + number + "\n", http.StatusUnprocessableEntity},
+		{"inner whitespace", aliceAuthorization, "text/plain", "1234 5678903", http.StatusUnprocessableEntity},
+		{"surrounding whitespace", aliceAuthorization, "text/plain", " " + number + "\n", http.StatusOK},
+		{"surrounding whitespace from another user", bob.Header().Get("Authorization"), "text/plain", "\t" + number + "\r\n", http.StatusConflict},
 		{"invalid checksum", aliceAuthorization, "text/plain", "12345678904", http.StatusUnprocessableEntity},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -100,9 +103,19 @@ func TestOrderSubmissionIntegration(t *testing.T) {
 	}
 	assertOrderCount(t, pool, 1)
 
+	const paddedNumber = "79927398713"
+	response = orderRequest(router, aliceAuthorization, "", " "+paddedNumber+"\r\n")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("padded order status = %d, body = %q; want 202", response.Code, response.Body.String())
+	}
+	if _, err := postgres.NewOrderRepository(pool).GetByNumber(ctx, order.Number(paddedNumber)); err != nil {
+		t.Fatalf("padded order was not stored without surrounding whitespace: %v", err)
+	}
+	assertOrderCount(t, pool, 2)
+
 	// A number is stored as text, including leading zeros and digits beyond any
 	// integer representation. Adding zeros on the left preserves the checksum.
-	longNumber := strings.Repeat("0", 256) + number
+	longNumber := strings.Repeat("0", 100000) + number
 	response = orderRequest(router, aliceAuthorization, "text/plain; charset=utf-8", longNumber)
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("long order status = %d, body = %q; want 202", response.Code, response.Body.String())
@@ -114,7 +127,7 @@ func TestOrderSubmissionIntegration(t *testing.T) {
 	if string(longOrder.Number()) != longNumber {
 		t.Fatalf("persisted long number = %q, want %q", longOrder.Number(), longNumber)
 	}
-	assertOrderCount(t, pool, 2)
+	assertOrderCount(t, pool, 3)
 }
 
 func TestConcurrentOrderSubmissionIntegration(t *testing.T) {

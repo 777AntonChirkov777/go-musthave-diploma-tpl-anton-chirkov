@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"mime"
 	"net/http"
 
 	application "diplom/internal/application/user"
@@ -17,10 +16,6 @@ const (
 )
 
 func decodeCredentials(w http.ResponseWriter, r *http.Request) (string, string, error) {
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
-		return "", "", domain.ErrInvalidCredentials
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxCredentialsBody)
 	defer r.Body.Close()
 	var body struct {
@@ -28,7 +23,6 @@ func decodeCredentials(w http.ResponseWriter, r *http.Request) (string, string, 
 		Password string `json:"password"`
 	}
 	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
 		return "", "", err
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,8 +131,8 @@ func TestListOrdersIntegration(t *testing.T) {
 			t.Fatalf("submitted order list = %s; want only %s with status NEW and no accrual", response.Body.String(), number)
 		}
 		parsedTime, err := time.Parse(time.RFC3339, items[0].UploadedAt)
-		if err != nil || !parsedTime.Truncate(time.Second).Equal(stored.UploadedAt().Truncate(time.Second)) {
-			t.Errorf("uploaded_at = %q, parse error = %v; want persisted upload time %s in RFC3339", items[0].UploadedAt, err, stored.UploadedAt())
+		if err != nil || strings.Contains(items[0].UploadedAt, ".") || !parsedTime.Equal(stored.UploadedAt().Truncate(time.Second)) {
+			t.Errorf("uploaded_at = %q, parse error = %v; want persisted upload time %s in RFC3339 without fractional seconds", items[0].UploadedAt, err, stored.UploadedAt())
 		}
 	})
 }

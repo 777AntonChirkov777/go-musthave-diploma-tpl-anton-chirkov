@@ -103,8 +103,11 @@ func TestListOrdersJSON(t *testing.T) {
 					t.Fatal(err)
 				}
 				parsed, err := time.Parse(time.RFC3339, uploadedAt)
-				if err != nil || !parsed.Equal(stored[i].UploadedAt()) {
-					t.Errorf("uploaded_at = %q, error = %v, want %v in RFC3339", uploadedAt, err, stored[i].UploadedAt())
+				if err != nil || strings.Contains(uploadedAt, ".") || !parsed.Equal(stored[i].UploadedAt().Truncate(time.Second)) {
+					t.Errorf("uploaded_at = %q, error = %v, want %v in RFC3339 without fractional seconds", uploadedAt, err, stored[i].UploadedAt())
+				}
+				if i == 0 && uploadedAt != "2026-09-20T12:30:00+03:00" {
+					t.Errorf("newest uploaded_at = %q, want 2026-09-20T12:30:00+03:00", uploadedAt)
 				}
 				if number != string(stored[i].Number()) || status != string(stored[i].Status()) {
 					t.Errorf("entry %d number/status = %q/%q, want %q/%q in repository order", i, number, status, stored[i].Number(), stored[i].Status())

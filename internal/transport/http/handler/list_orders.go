@@ -33,7 +33,7 @@ type listOrderResponse struct {
 	Number     string       `json:"number"`
 	Status     order.Status `json:"status"`
 	Accrual    *float64     `json:"accrual,omitempty"`
-	UploadedAt time.Time    `json:"uploaded_at"`
+	UploadedAt string       `json:"uploaded_at"`
 }
 
 func (h *ListOrdersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +58,7 @@ func (h *ListOrdersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		response[i] = listOrderResponse{
 			Number:     string(stored.Number()),
 			Status:     stored.Status(),
-			UploadedAt: stored.UploadedAt(),
+			UploadedAt: stored.UploadedAt().Format(time.RFC3339),
 		}
 		if accrual, present := stored.Accrual(); present {
 			response[i].Accrual = &accrual

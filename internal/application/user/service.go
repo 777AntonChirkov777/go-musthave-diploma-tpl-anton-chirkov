@@ -38,6 +38,7 @@ type Repository interface {
 	GetByLogin(context.Context, string) (domain.User, error)
 	AddSession(context.Context, Session) error
 	GetSession(context.Context, string) (Session, error)
+	DeleteExpiredSessions(context.Context, time.Time) (int64, error)
 }
 
 type PasswordHasher interface {
@@ -140,6 +141,17 @@ func (s *Service) Authenticate(ctx context.Context, token string) (domain.ID, er
 		return "", ErrUnauthenticated
 	}
 	return session.UserID, nil
+}
+
+func (s *Service) PurgeExpiredSessions(ctx context.Context) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	deleted, err := s.repository.DeleteExpiredSessions(ctx, s.now())
+	if err != nil {
+		return 0, fmt.Errorf("delete expired sessions: %w", err)
+	}
+	return deleted, nil
 }
 
 func (s *Service) newSession(userID domain.ID) (Authenticated, Session, error) {

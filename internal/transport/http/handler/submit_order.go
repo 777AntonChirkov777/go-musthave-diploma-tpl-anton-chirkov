@@ -1,17 +1,19 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
-	"mime"
 	"net/http"
 
 	application "diplom/internal/application/order"
 	domain "diplom/internal/domain/order"
 	"diplom/internal/domain/user"
 )
+
+const maxOrderBody = 1 << 20
 
 type SubmitOrderService interface {
 	Submit(context.Context, user.ID, string) (domain.Order, bool, error)
@@ -38,13 +40,10 @@ func (h *SubmitOrderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != "text/plain" {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxOrderBody)
 	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
+	body = bytes.TrimSpace(body)
 	if err != nil || len(body) == 0 {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return

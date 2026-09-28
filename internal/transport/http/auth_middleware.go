@@ -49,19 +49,23 @@ func RequireAuth(users SessionAuthenticator, logger *slog.Logger, next http.Hand
 }
 
 func requestToken(r *http.Request) (string, error) {
-	if values, present := r.Header["Authorization"]; present {
-		if len(values) != 1 {
-			return "", application.ErrUnauthenticated
-		}
-		parts := strings.Fields(values[0])
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			return "", application.ErrUnauthenticated
-		}
-		return parts[1], nil
+	if token, ok := bearerToken(r.Header["Authorization"]); ok {
+		return token, nil
 	}
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil || cookie.Value == "" {
 		return "", application.ErrUnauthenticated
 	}
 	return cookie.Value, nil
+}
+
+func bearerToken(values []string) (string, bool) {
+	if len(values) != 1 {
+		return "", false
+	}
+	parts := strings.Fields(values[0])
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", false
+	}
+	return parts[1], true
 }

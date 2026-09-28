@@ -98,9 +98,9 @@ func TestSubmitOrderRejectsMalformedRequests(t *testing.T) {
 		readError   bool
 	}{
 		{name: "empty body", contentType: "text/plain"},
-		{name: "missing content type", body: "12345678903"},
-		{name: "wrong content type", body: "12345678903", contentType: "application/json"},
-		{name: "malformed content type", body: "12345678903", contentType: "text/plain; charset"},
+		{name: "whitespace only body", body: " \t\r\n ", contentType: "text/plain"},
+		{name: "body over limit", body: strings.Repeat("1", 1<<20+1), contentType: "text/plain"},
+		{name: "body over limit without content type", body: strings.Repeat("1", 1<<20+1)},
 		{name: "body read failure", contentType: "text/plain", readError: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -128,22 +128,59 @@ func (failingOrderReader) Read([]byte) (int, error) {
 	return 0, io.ErrUnexpectedEOF
 }
 
-func TestSubmitOrderPreservesRawNumber(t *testing.T) {
-	for _, number := range []string{"00012345678903", strings.Repeat("0", 100000) + "12345678903", "12345678903\n", " 12345678903"} {
-		calls := 0
-		orders := submitOrderFunc(func(_ context.Context, _ user.ID, raw string) (domain.Order, bool, error) {
-			calls++
-			if raw != number {
-				t.Error("order number was truncated or altered")
+func TestSubmitOrderPassesTrimmedNumber(t *testing.T) {
+	longNumber := strings.Repeat("0", 100000) + "12345678903"
+	atLimit := strings.Repeat("0", 1<<20-len("12345678903")) + "12345678903"
+	for _, tt := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "leading zeros", body: "00012345678903", want: "00012345678903"},
+		{name: "long number", body: longNumber, want: longNumber},
+		{name: "body at limit", body: atLimit, want: atLimit},
+		{name: "trailing newline", body: "12345678903\n", want: "12345678903"},
+		{name: "leading space", body: " 12345678903", want: "12345678903"},
+		{name: "surrounding whitespace", body: "\t 12345678903\r\n", want: "12345678903"},
+		{name: "inner whitespace kept", body: " 1234 5678903\n", want: "1234 5678903"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			orders := submitOrderFunc(func(_ context.Context, _ user.ID, raw string) (domain.Order, bool, error) {
+				calls++
+				if raw != tt.want {
+					t.Errorf("number passed to service has length %d, want %d", len(raw), len(tt.want))
+				}
+				return domain.Order{}, true, nil
+			})
+			router := httptransport.NewRouter(orderAuthStub(), orders, testLogger())
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, orderRequest(tt.body, "text/plain; charset=utf-8"))
+			if response.Code != http.StatusAccepted || calls != 1 {
+				t.Fatalf("status = %d, calls = %d, want 202 and 1", response.Code, calls)
 			}
-			return domain.Order{}, true, nil
 		})
-		router := httptransport.NewRouter(orderAuthStub(), orders, testLogger())
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, orderRequest(number, "text/plain; charset=utf-8"))
-		if response.Code != http.StatusAccepted || calls != 1 {
-			t.Fatalf("status = %d, calls = %d, want 202 and 1", response.Code, calls)
-		}
+	}
+}
+
+func TestSubmitOrderIgnoresContentType(t *testing.T) {
+	for _, contentType := range []string{"", "text/plain", "application/json", "application/octet-stream", "text/plain; charset"} {
+		t.Run(contentType, func(t *testing.T) {
+			calls := 0
+			orders := submitOrderFunc(func(_ context.Context, _ user.ID, raw string) (domain.Order, bool, error) {
+				calls++
+				if raw != "12345678903" {
+					t.Errorf("number = %q, want 12345678903", raw)
+				}
+				return domain.Order{}, true, nil
+			})
+			router := httptransport.NewRouter(orderAuthStub(), orders, testLogger())
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, orderRequest("12345678903", contentType))
+			if response.Code != http.StatusAccepted || calls != 1 {
+				t.Fatalf("status = %d, calls = %d, want 202 and 1", response.Code, calls)
+			}
+		})
 	}
 }
 

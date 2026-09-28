@@ -190,6 +190,49 @@ func TestUserRepositoryFailedSessionRollsBackRegistration(t *testing.T) {
 	}
 }
 
+func TestUserRepositoryDeletesOnlyExpiredSessions(t *testing.T) {
+	ctx := context.Background()
+	pool := isolatedDatabase(t)()
+	if err := postgres.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	repository := postgres.NewUserRepository(pool)
+	user := newUser(t, "user-1", "alice")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	active := application.Session{UserID: user.ID(), TokenHash: "active-token-hash", ExpiresAt: now.Add(time.Microsecond)}
+	if err := repository.Register(ctx, user, active); err != nil {
+		t.Fatal(err)
+	}
+	expired := application.Session{UserID: user.ID(), TokenHash: "expired-token-hash", ExpiresAt: now.Add(-time.Hour)}
+	boundary := application.Session{UserID: user.ID(), TokenHash: "boundary-token-hash", ExpiresAt: now}
+	for _, session := range []application.Session{expired, boundary} {
+		if err := repository.AddSession(ctx, session); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deleted, err := repository.DeleteExpiredSessions(ctx, now)
+	if err != nil || deleted != 2 {
+		t.Fatalf("DeleteExpiredSessions = %d, %v; want 2, nil", deleted, err)
+	}
+	for _, session := range []application.Session{expired, boundary} {
+		if _, err := repository.GetSession(ctx, session.TokenHash); !errors.Is(err, application.ErrNotFound) {
+			t.Errorf("session %s error = %v, want ErrNotFound after purge", session.TokenHash, err)
+		}
+	}
+	if _, err := repository.GetSession(ctx, active.TokenHash); err != nil {
+		t.Fatalf("active session was removed: %v", err)
+	}
+	if _, err := repository.GetByLogin(ctx, user.Login()); err != nil {
+		t.Fatalf("purge affected the user: %v", err)
+	}
+
+	deleted, err = repository.DeleteExpiredSessions(ctx, now)
+	if err != nil || deleted != 0 {
+		t.Fatalf("repeated DeleteExpiredSessions = %d, %v; want 0, nil", deleted, err)
+	}
+}
+
 func newUser(t *testing.T, id domain.ID, login string) domain.User {
 	t.Helper()
 	user, err := domain.New(id, login, "stored-password-hash")
