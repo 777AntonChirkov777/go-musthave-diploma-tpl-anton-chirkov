@@ -33,11 +33,15 @@ func (r *OrderRepository) Add(ctx context.Context, order domain.Order) error {
 		return err
 	}
 	hash := sha256.Sum256([]byte(order.Number()))
+	var accrual *float64
+	if value, present := order.Accrual(); present {
+		accrual = &value
+	}
 	result, err := r.pool.Exec(ctx, `
-		INSERT INTO orders (number_hash, number, user_id, status, uploaded_at)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO orders (number_hash, number, user_id, status, uploaded_at, accrual)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (number_hash) DO NOTHING`,
-		hash[:], string(order.Number()), string(order.UserID()), string(order.Status()), order.UploadedAt(),
+		hash[:], string(order.Number()), string(order.UserID()), string(order.Status()), order.UploadedAt(), accrual,
 	)
 	if err != nil {
 		return fmt.Errorf("insert order: %w", err)
@@ -64,7 +68,7 @@ func (r *OrderRepository) Add(ctx context.Context, order domain.Order) error {
 func (r *OrderRepository) GetByNumber(ctx context.Context, number domain.Number) (domain.Order, error) {
 	hash := sha256.Sum256([]byte(number))
 	order, err := scanOrder(r.pool.QueryRow(ctx, `
-		SELECT number, user_id, status, uploaded_at
+		SELECT number, user_id, status, uploaded_at, accrual
 		FROM orders WHERE number_hash = $1 AND number = $2`, hash[:], string(number)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Order{}, application.ErrNotFound
@@ -77,7 +81,7 @@ func (r *OrderRepository) GetByNumber(ctx context.Context, number domain.Number)
 
 func (r *OrderRepository) ListByUser(ctx context.Context, userID user.ID) ([]domain.Order, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT number, user_id, status, uploaded_at
+		SELECT number, user_id, status, uploaded_at, accrual
 		FROM orders WHERE user_id = $1 ORDER BY uploaded_at DESC, number`, string(userID))
 	if err != nil {
 		return nil, fmt.Errorf("list orders by user: %w", err)
@@ -101,8 +105,16 @@ func (r *OrderRepository) ListByUser(ctx context.Context, userID user.ID) ([]dom
 func scanOrder(row pgx.Row) (domain.Order, error) {
 	var number, userID, status string
 	var uploadedAt time.Time
-	if err := row.Scan(&number, &userID, &status, &uploadedAt); err != nil {
+	var accrual *float64
+	if err := row.Scan(&number, &userID, &status, &uploadedAt, &accrual); err != nil {
 		return domain.Order{}, err
 	}
-	return domain.Restore(domain.Number(number), user.ID(userID), domain.Status(status), uploadedAt)
+	order, err := domain.Restore(domain.Number(number), user.ID(userID), domain.Status(status), uploadedAt)
+	if err != nil {
+		return domain.Order{}, err
+	}
+	if accrual != nil {
+		return order.WithAccrual(*accrual)
+	}
+	return order, nil
 }
