@@ -2,6 +2,7 @@ package order_test
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -17,6 +18,9 @@ func TestNewOrder(t *testing.T) {
 	}
 	if got.Number() != "00012345678903" || got.UserID() != "user-id" || got.Status() != order.StatusNew || got.UploadedAt() != uploadedAt {
 		t.Fatalf("new order does not preserve supplied values and NEW status: %+v", got)
+	}
+	if value, present := got.Accrual(); value != 0 || present {
+		t.Fatalf("new order accrual = %v, %v, want absent", value, present)
 	}
 }
 
@@ -54,6 +58,59 @@ func TestRestoreOrderPreservesStoredStatus(t *testing.T) {
 			}
 			if got.Number() != "00012345678903" || got.UserID() != "user-id" || got.Status() != status || got.UploadedAt() != uploadedAt {
 				t.Fatalf("restored order does not preserve stored values: %+v", got)
+			}
+			if _, present := got.Accrual(); present {
+				t.Fatal("restored order has unexpected accrual")
+			}
+		})
+	}
+}
+
+func TestOrderWithAccrualPreservesOrder(t *testing.T) {
+	uploadedAt := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	for _, status := range []order.Status{order.StatusNew, order.StatusProcessing, order.StatusInvalid, order.StatusProcessed} {
+		t.Run(string(status), func(t *testing.T) {
+			original, err := order.Restore("00012345678903", "user-id", status, uploadedAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, reward := range []float64{0, 500, 12.34} {
+				got, err := original.WithAccrual(reward)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if value, present := got.Accrual(); !present || value != reward {
+					t.Fatalf("accrual = %v, %v, want %v, true", value, present, reward)
+				}
+				if got.Number() != original.Number() || got.UserID() != original.UserID() || got.Status() != original.Status() || got.UploadedAt() != original.UploadedAt() {
+					t.Fatalf("WithAccrual changed order values: got %+v, original %+v", got, original)
+				}
+				if _, present := original.Accrual(); present {
+					t.Fatal("WithAccrual changed the original order")
+				}
+			}
+		})
+	}
+}
+
+func TestOrderWithAccrualRejectsInvalidValues(t *testing.T) {
+	original, err := order.New("12345678903", "user-id", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		value float64
+	}{
+		{name: "negative", value: -0.01},
+		{name: "NaN", value: math.NaN()},
+		{name: "positive infinity", value: math.Inf(1)},
+		{name: "negative infinity", value: math.Inf(-1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := original.WithAccrual(tc.value)
+			if got != (order.Order{}) || !errors.Is(err, order.ErrInvalidAccrual) {
+				t.Fatalf("WithAccrual = %+v, %v, want zero order and ErrInvalidAccrual", got, err)
 			}
 		})
 	}

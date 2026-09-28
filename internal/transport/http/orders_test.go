@@ -24,6 +24,10 @@ func (f submitOrderFunc) Submit(ctx context.Context, id user.ID, number string) 
 	return f(ctx, id, number)
 }
 
+func (f submitOrderFunc) List(context.Context, user.ID) ([]domain.Order, error) {
+	panic("unexpected List call in submission test")
+}
+
 func orderAuthStub() authStub {
 	return authStub{authenticate: func(_ context.Context, token string) (user.ID, error) {
 		if token != "valid-session" {
@@ -188,7 +192,7 @@ func TestSubmitOrderAcceptsSessionCookie(t *testing.T) {
 
 func TestOrderRouteRejectsOtherMethods(t *testing.T) {
 	router := httptransport.NewRouter(authStub{}, nil, testLogger())
-	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+	for _, method := range []string{http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest(method, "/api/user/orders", nil))
 		if response.Code != http.StatusMethodNotAllowed {

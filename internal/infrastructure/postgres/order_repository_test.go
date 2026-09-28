@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"diplom/internal/domain/user"
 	"diplom/internal/infrastructure/postgres"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,9 +29,16 @@ func TestOrderRepositoryPersistsAcrossPoolReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := registerOrderOwner(t, pool, "owner")
-	want := newOrder(t, "0012345678903", owner, time.Date(2026, 9, 20, 12, 30, 0, 123456000, time.UTC))
-	if err := postgres.NewOrderRepository(pool).Add(ctx, want); err != nil {
-		t.Fatal(err)
+	base := time.Date(2026, 9, 20, 12, 30, 0, 123456000, time.UTC)
+	wants := []domain.Order{
+		newOrder(t, "0012345678903", owner, base),
+		withOrderAccrual(t, newOrder(t, "12345678903", owner, base.Add(time.Minute)), 0),
+		withOrderAccrual(t, newOrder(t, "346436439", owner, base.Add(2*time.Minute)), 500.25),
+	}
+	for _, want := range wants {
+		if err := postgres.NewOrderRepository(pool).Add(ctx, want); err != nil {
+			t.Fatal(err)
+		}
 	}
 	pool.Close()
 
@@ -38,11 +47,20 @@ func TestOrderRepositoryPersistsAcrossPoolReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	repository := postgres.NewOrderRepository(reopenedPool)
-	got, err := repository.GetByNumber(ctx, want.Number())
-	if err != nil {
-		t.Fatal(err)
+	for _, want := range wants {
+		got, err := repository.GetByNumber(ctx, want.Number())
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertOrderEqual(t, got, want)
 	}
-	assertOrderEqual(t, got, want)
+	listed, err := repository.ListByUser(ctx, owner)
+	if err != nil || len(listed) != len(wants) {
+		t.Fatalf("listed orders = %v, error = %v, want %d orders", listed, err, len(wants))
+	}
+	for i, got := range listed {
+		assertOrderEqual(t, got, wants[len(wants)-1-i])
+	}
 	if _, err := repository.GetByNumber(ctx, "79927398713"); !errors.Is(err, application.ErrNotFound) {
 		t.Fatalf("missing order error = %v, want ErrNotFound", err)
 	}
@@ -245,6 +263,33 @@ func TestOrderRepositoryRejectsInvalidOrderAndMissingOwner(t *testing.T) {
 	}
 }
 
+func TestOrderRepositorySchemaRejectsInvalidAccrual(t *testing.T) {
+	ctx := context.Background()
+	pool := migratedOrderDatabase(t)
+	owner := registerOrderOwner(t, pool, "owner")
+	original := newOrder(t, "12345678903", owner, time.Now())
+	if err := postgres.NewOrderRepository(pool).Add(ctx, original); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		value float64
+	}{
+		{name: "negative", value: -0.01},
+		{name: "NaN", value: math.NaN()},
+		{name: "positive infinity", value: math.Inf(1)},
+		{name: "negative infinity", value: math.Inf(-1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := pool.Exec(ctx, "UPDATE orders SET accrual = $1 WHERE number = $2", tc.value, string(original.Number()))
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+				t.Fatalf("invalid accrual update error = %v, want check constraint violation", err)
+			}
+		})
+	}
+}
+
 func migratedOrderDatabase(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	pool := isolatedDatabase(t)()
@@ -277,6 +322,20 @@ func assertOrderEqual(t *testing.T, got, want domain.Order) {
 	if got.Number() != want.Number() || got.UserID() != want.UserID() || got.Status() != want.Status() || !got.UploadedAt().Equal(want.UploadedAt()) {
 		t.Fatalf("stored order differs: got %+v, want %+v", got, want)
 	}
+	gotAccrual, gotPresent := got.Accrual()
+	wantAccrual, wantPresent := want.Accrual()
+	if gotAccrual != wantAccrual || gotPresent != wantPresent {
+		t.Fatalf("stored accrual = %v, %v, want %v, %v", gotAccrual, gotPresent, wantAccrual, wantPresent)
+	}
+}
+
+func withOrderAccrual(t *testing.T, order domain.Order, value float64) domain.Order {
+	t.Helper()
+	result, err := order.WithAccrual(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func longValidOrderNumber(t *testing.T, length int) string {
