@@ -22,8 +22,10 @@ var (
 	ErrAlreadyExists     = errors.New("order already exists")
 	ErrInvalidUploadedAt = errors.New("order upload time must not be zero")
 	ErrInvalidStatus     = errors.New("invalid order status")
-	ErrInvalidAccrual    = errors.New("order accrual must be finite and nonnegative")
+	ErrInvalidAccrual    = errors.New("order accrual must be nonnegative and below 10^18")
 )
+
+const maxAccrual = 1e18
 
 type Order struct {
 	number     Number
@@ -70,7 +72,7 @@ func (o Order) UploadedAt() time.Time { return o.uploadedAt }
 func (o Order) Accrual() (float64, bool) { return o.accrual, o.hasAccrual }
 
 func (o Order) WithAccrual(value float64) (Order, error) {
-	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+	if value < 0 || value >= maxAccrual || math.IsNaN(value) {
 		return Order{}, ErrInvalidAccrual
 	}
 	o.accrual = value
