@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	balanceapplication "diplom/internal/application/balance"
 	orderapplication "diplom/internal/application/order"
 	userapplication "diplom/internal/application/user"
 	"diplom/internal/infrastructure/config"
@@ -28,6 +29,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	defer pool.Close()
 	users := userapplication.NewService(postgres.NewUserRepository(pool), password.NewHasher(), nil)
 	orders := orderapplication.NewService(postgres.NewOrderRepository(pool), nil)
+	balances := balanceapplication.NewService(postgres.NewBalanceRepository(pool), nil)
 	listener, err := net.Listen("tcp", cfg.RunAddress)
 	if err != nil {
 		return fmt.Errorf("listen HTTP: %w", err)
@@ -36,7 +38,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if cfg.AccrualSystemAddress != "" {
 		logger.Info("accrual configuration is reserved; adapter is not connected")
 	}
-	return serve(ctx, listener, httptransport.NewRouter(users, orders, logger), users, sessionCleanupInterval, logger)
+	return serve(ctx, listener, httptransport.NewRouter(users, orders, balances, logger), users, sessionCleanupInterval, logger)
 }
 
 func serve(ctx context.Context, listener net.Listener, handler http.Handler, sessions sessionPurger, interval time.Duration, logger *slog.Logger) error {
