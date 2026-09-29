@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	balanceapplication "diplom/internal/application/balance"
 	orderapplication "diplom/internal/application/order"
 	userapplication "diplom/internal/application/user"
 	"diplom/internal/domain/order"
@@ -196,8 +197,9 @@ func TestConcurrentOrderSubmissionIntegration(t *testing.T) {
 func orderHTTPRouter(pool *pgxpool.Pool) http.Handler {
 	users := userapplication.NewService(postgres.NewUserRepository(pool), password.NewHasher(), nil)
 	orders := orderapplication.NewService(postgres.NewOrderRepository(pool), nil)
+	balances := balanceapplication.NewService(postgres.NewBalanceRepository(pool), nil)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return httptransport.NewRouter(users, orders, logger)
+	return httptransport.NewRouter(users, orders, balances, logger)
 }
 
 func orderCredentials(t *testing.T, router http.Handler, path, login string) *httptest.ResponseRecorder {

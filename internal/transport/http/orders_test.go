@@ -71,7 +71,7 @@ func TestSubmitOrderResults(t *testing.T) {
 				}
 				return domain.Order{}, tt.created, tt.err
 			})
-			router := httptransport.NewRouter(orderAuthStub(), orders, testLogger())
+			router := httptransport.NewRouter(orderAuthStub(), orders, nil, testLogger())
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, orderRequest("12345678903", "text/plain"))
 			if response.Code != tt.want || calls != 1 {
@@ -108,7 +108,7 @@ func TestSubmitOrderRejectsMalformedRequests(t *testing.T) {
 				t.Fatal("malformed request reached the order service")
 				return domain.Order{}, false, nil
 			})
-			router := httptransport.NewRouter(orderAuthStub(), orders, testLogger())
+			router := httptransport.NewRouter(orderAuthStub(), orders, nil, testLogger())
 			req := orderRequest(tt.body, tt.contentType)
 			if tt.readError {
 				req.Body = io.NopCloser(failingOrderReader{})
@@ -153,7 +153,7 @@ func TestSubmitOrderPassesTrimmedNumber(t *testing.T) {
 				}
 				return domain.Order{}, true, nil
 			})
-			router := httptransport.NewRouter(orderAuthStub(), orders, testLogger())
+			router := httptransport.NewRouter(orderAuthStub(), orders, nil, testLogger())
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, orderRequest(tt.body, "text/plain; charset=utf-8"))
 			if response.Code != http.StatusAccepted || calls != 1 {
@@ -174,7 +174,7 @@ func TestSubmitOrderIgnoresContentType(t *testing.T) {
 				}
 				return domain.Order{}, true, nil
 			})
-			router := httptransport.NewRouter(orderAuthStub(), orders, testLogger())
+			router := httptransport.NewRouter(orderAuthStub(), orders, nil, testLogger())
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, orderRequest("12345678903", contentType))
 			if response.Code != http.StatusAccepted || calls != 1 {
@@ -189,7 +189,7 @@ func TestSubmitOrderRequiresAuthentication(t *testing.T) {
 		t.Fatal("unauthenticated request reached the order service")
 		return domain.Order{}, false, nil
 	})
-	router := httptransport.NewRouter(orderAuthStub(), orders, testLogger())
+	router := httptransport.NewRouter(orderAuthStub(), orders, nil, testLogger())
 	for _, authorization := range []string{"", "Bearer invalid-session", "Basic valid-session"} {
 		req := orderRequest("12345678903", "text/plain")
 		req.Header.Del("Authorization")
@@ -221,14 +221,14 @@ func TestSubmitOrderAcceptsSessionCookie(t *testing.T) {
 	req.Header.Del("Authorization")
 	req.AddCookie(&http.Cookie{Name: httptransport.SessionCookieName, Value: "valid-session"})
 	response := httptest.NewRecorder()
-	httptransport.NewRouter(orderAuthStub(), orders, testLogger()).ServeHTTP(response, req)
+	httptransport.NewRouter(orderAuthStub(), orders, nil, testLogger()).ServeHTTP(response, req)
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("cookie upload status = %d, want 202", response.Code)
 	}
 }
 
 func TestOrderRouteRejectsOtherMethods(t *testing.T) {
-	router := httptransport.NewRouter(authStub{}, nil, testLogger())
+	router := httptransport.NewRouter(authStub{}, nil, nil, testLogger())
 	for _, method := range []string{http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest(method, "/api/user/orders", nil))
