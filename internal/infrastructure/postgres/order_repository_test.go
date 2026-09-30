@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -272,21 +273,47 @@ func TestOrderRepositorySchemaRejectsInvalidAccrual(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name  string
-		value float64
+		name      string
+		value     float64
+		wantCodes []string
 	}{
-		{name: "negative", value: -0.01},
-		{name: "NaN", value: math.NaN()},
-		{name: "positive infinity", value: math.Inf(1)},
-		{name: "negative infinity", value: math.Inf(-1)},
+		{name: "negative", value: -0.01, wantCodes: []string{"23514"}},
+		{name: "NaN", value: math.NaN(), wantCodes: []string{"23514"}},
+		{name: "positive infinity", value: math.Inf(1), wantCodes: []string{"23514", "22003"}},
+		{name: "negative infinity", value: math.Inf(-1), wantCodes: []string{"23514", "22003"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := pool.Exec(ctx, "UPDATE orders SET accrual = $1 WHERE number = $2", tc.value, string(original.Number()))
 			var pgErr *pgconn.PgError
-			if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
-				t.Fatalf("invalid accrual update error = %v, want check constraint violation", err)
+			if !errors.As(err, &pgErr) || !slices.Contains(tc.wantCodes, pgErr.Code) {
+				t.Fatalf("invalid accrual update error = %v, want one of %v", err, tc.wantCodes)
 			}
 		})
+	}
+}
+
+func TestOrderRepositoryRoundsAccrualToHundredths(t *testing.T) {
+	ctx := context.Background()
+	pool := migratedOrderDatabase(t)
+	owner := registerOrderOwner(t, pool, "owner")
+	repository := postgres.NewOrderRepository(pool)
+	stored := withOrderAccrual(t, newOrder(t, "12345678903", owner, time.Now()), 0.125)
+	if err := repository.Add(ctx, stored); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repository.GetByNumber(ctx, stored.Number())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accrual, present := got.Accrual(); !present || accrual != 0.13 {
+		t.Fatalf("stored accrual = %v, %v, want 0.13", accrual, present)
+	}
+	listed, err := repository.ListByUser(ctx, owner)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("listed orders = %v, error = %v, want one order", listed, err)
+	}
+	if accrual, present := listed[0].Accrual(); !present || accrual != 0.13 {
+		t.Fatalf("listed accrual = %v, %v, want 0.13", accrual, present)
 	}
 }
 

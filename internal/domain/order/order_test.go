@@ -74,7 +74,7 @@ func TestOrderWithAccrualPreservesOrder(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, reward := range []float64{0, 500, 12.34} {
+			for _, reward := range []float64{0, 500, 12.34, math.Nextafter(1e18, 0)} {
 				got, err := original.WithAccrual(reward)
 				if err != nil {
 					t.Fatal(err)
@@ -106,6 +106,8 @@ func TestOrderWithAccrualRejectsInvalidValues(t *testing.T) {
 		{name: "NaN", value: math.NaN()},
 		{name: "positive infinity", value: math.Inf(1)},
 		{name: "negative infinity", value: math.Inf(-1)},
+		{name: "at storage limit", value: 1e18},
+		{name: "above storage limit", value: 1e19},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := original.WithAccrual(tc.value)

@@ -74,7 +74,7 @@ func TestListOrdersJSON(t *testing.T) {
 				req.AddCookie(&http.Cookie{Name: httptransport.SessionCookieName, Value: "valid-session"})
 			}
 			response := httptest.NewRecorder()
-			httptransport.NewRouter(orderAuthStub(), orders, testLogger()).ServeHTTP(response, req)
+			httptransport.NewRouter(orderAuthStub(), orders, nil, testLogger()).ServeHTTP(response, req)
 			if response.Code != http.StatusOK || calls != 1 {
 				t.Fatalf("status = %d, calls = %d, want 200 and 1; body = %q", response.Code, calls, response.Body.String())
 			}
@@ -139,7 +139,7 @@ func TestListOrdersEmpty(t *testing.T) {
 			return empty, nil
 		})
 		response := httptest.NewRecorder()
-		httptransport.NewRouter(orderAuthStub(), orders, testLogger()).ServeHTTP(response, listRequest())
+		httptransport.NewRouter(orderAuthStub(), orders, nil, testLogger()).ServeHTTP(response, listRequest())
 		if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 			t.Fatalf("empty list status = %d, body = %q; want 204 and no body", response.Code, response.Body.String())
 		}
@@ -151,7 +151,7 @@ func TestListOrdersBackendFailure(t *testing.T) {
 		return []domain.Order{{}}, errors.New("private-backend-secret")
 	})
 	response := httptest.NewRecorder()
-	httptransport.NewRouter(orderAuthStub(), orders, testLogger()).ServeHTTP(response, listRequest())
+	httptransport.NewRouter(orderAuthStub(), orders, nil, testLogger()).ServeHTTP(response, listRequest())
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", response.Code)
 	}
@@ -165,7 +165,7 @@ func TestListOrdersRequiresAuthentication(t *testing.T) {
 		t.Fatal("unauthenticated request reached the order service")
 		return nil, nil
 	})
-	router := httptransport.NewRouter(orderAuthStub(), orders, testLogger())
+	router := httptransport.NewRouter(orderAuthStub(), orders, nil, testLogger())
 	for _, authorization := range []string{"", "Bearer invalid-session", "Basic valid-session"} {
 		req := listRequest()
 		req.Header.Del("Authorization")
