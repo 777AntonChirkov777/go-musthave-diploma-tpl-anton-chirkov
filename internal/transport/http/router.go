@@ -34,5 +34,5 @@ func NewRouter(users AuthService, orders OrderService, balances BalanceService, 
 	mux.Handle("GET /api/user/balance", RequireAuth(users, logger, handler.NewBalanceHandler(balances, logger)))
 	mux.Handle("POST /api/user/balance/withdraw", RequireAuth(users, logger, handler.NewWithdrawHandler(balances, logger)))
 	mux.Handle("GET /api/user/withdrawals", RequireAuth(users, logger, handler.NewListWithdrawalsHandler(balances, logger)))
-	return mux
+	return Compress(mux)
 }
