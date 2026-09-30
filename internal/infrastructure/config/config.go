@@ -32,7 +32,7 @@ func Load(args []string) (Config, error) {
 	flags := flag.NewFlagSet("gophermart", flag.ContinueOnError)
 	flags.StringVar(&flagConfig.RunAddress, "a", defaultRunAddress, "HTTP listen address (RUN_ADDRESS)")
 	flags.StringVar(&flagConfig.DatabaseURI, "d", "", "required PostgreSQL URI (DATABASE_URI)")
-	flags.StringVar(&flagConfig.AccrualSystemAddress, "r", "", "reserved accrual URL (ACCRUAL_SYSTEM_ADDRESS); adapter not implemented")
+	flags.StringVar(&flagConfig.AccrualSystemAddress, "r", "", "accrual system address (ACCRUAL_SYSTEM_ADDRESS)")
 	flags.StringVar(&configPath, "c", defaultConfigPath, "YAML configuration file")
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err

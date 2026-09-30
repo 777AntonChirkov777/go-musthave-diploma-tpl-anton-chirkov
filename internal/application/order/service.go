@@ -22,9 +22,14 @@ type Repository interface {
 	ListByUser(context.Context, user.ID) ([]domain.Order, error)
 }
 
+type Notifier interface {
+	Notify(domain.Number)
+}
+
 type Service struct {
 	repository Repository
 	now        func() time.Time
+	notifier   Notifier
 }
 
 func NewService(repository Repository, now func() time.Time) *Service {
@@ -32,6 +37,11 @@ func NewService(repository Repository, now func() time.Time) *Service {
 		now = time.Now
 	}
 	return &Service{repository: repository, now: now}
+}
+
+func (s *Service) WithNotifier(notifier Notifier) *Service {
+	s.notifier = notifier
+	return s
 }
 
 func (s *Service) Submit(ctx context.Context, userID user.ID, rawNumber string) (domain.Order, bool, error) {
@@ -61,6 +71,9 @@ func (s *Service) Submit(ctx context.Context, userID user.ID, rawNumber string) 
 			return domain.Order{}, false, ErrOwnedByAnotherUser
 		}
 		return existing, false, nil
+	}
+	if s.notifier != nil {
+		s.notifier.Notify(number)
 	}
 	return submitted, true, nil
 }
