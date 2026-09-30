@@ -38,8 +38,8 @@ func (r *OrderRepository) Add(ctx context.Context, order domain.Order) error {
 		accrual = &value
 	}
 	result, err := r.pool.Exec(ctx, `
-		INSERT INTO orders (number_hash, number, user_id, status, uploaded_at, accrual)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO orders (number_hash, number, user_id, status, uploaded_at, accrual, next_check_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $5)
 		ON CONFLICT (number_hash) DO NOTHING`,
 		hash[:], string(order.Number()), string(order.UserID()), string(order.Status()), order.UploadedAt(), accrual,
 	)
