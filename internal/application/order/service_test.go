@@ -231,3 +231,80 @@ func (r stubRepository) GetByNumber(ctx context.Context, number domain.Number) (
 func (r stubRepository) ListByUser(ctx context.Context, userID user.ID) ([]domain.Order, error) {
 	return r.list(ctx, userID)
 }
+
+type recordingNotifier struct {
+	numbers []domain.Number
+}
+
+func (n *recordingNotifier) Notify(number domain.Number) {
+	n.numbers = append(n.numbers, number)
+}
+
+func TestSubmitNotifiesOnlyForNewOrders(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	existing := func(owner user.ID) func(context.Context, domain.Number) (domain.Order, error) {
+		return func(context.Context, domain.Number) (domain.Order, error) {
+			return domain.Restore("12345678903", owner, domain.StatusNew, now.Add(-time.Hour))
+		}
+	}
+	for _, tc := range []struct {
+		name       string
+		number     string
+		repository stubRepository
+		want       []domain.Number
+	}{
+		{
+			name:       "new order",
+			number:     "12345678903",
+			repository: stubRepository{add: func(context.Context, domain.Order) error { return nil }},
+			want:       []domain.Number{"12345678903"},
+		},
+		{
+			name:   "repeat by owner",
+			number: "12345678903",
+			repository: stubRepository{
+				add: func(context.Context, domain.Order) error { return domain.ErrAlreadyExists },
+				get: existing("user-id"),
+			},
+		},
+		{
+			name:   "another owner",
+			number: "12345678903",
+			repository: stubRepository{
+				add: func(context.Context, domain.Order) error { return domain.ErrAlreadyExists },
+				get: existing("another-user"),
+			},
+		},
+		{
+			name:       "invalid number",
+			number:     "12345678904",
+			repository: stubRepository{add: func(context.Context, domain.Order) error { return nil }},
+		},
+		{
+			name:       "repository failure",
+			number:     "12345678903",
+			repository: stubRepository{add: func(context.Context, domain.Order) error { return errors.New("storage unavailable") }},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			notifier := &recordingNotifier{}
+			service := application.NewService(tc.repository, func() time.Time { return now }).WithNotifier(notifier)
+			_, _, _ = service.Submit(context.Background(), "user-id", tc.number)
+			if len(notifier.numbers) != len(tc.want) {
+				t.Fatalf("Notify calls = %v, want %v", notifier.numbers, tc.want)
+			}
+			for i := range tc.want {
+				if notifier.numbers[i] != tc.want[i] {
+					t.Fatalf("Notify calls = %v, want %v", notifier.numbers, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestSubmitWithoutNotifier(t *testing.T) {
+	service := application.NewService(stubRepository{add: func(context.Context, domain.Order) error { return nil }}, nil).WithNotifier(nil)
+	if _, created, err := service.Submit(context.Background(), "user-id", "12345678903"); err != nil || !created {
+		t.Fatalf("Submit without notifier = %t, %v", created, err)
+	}
+}

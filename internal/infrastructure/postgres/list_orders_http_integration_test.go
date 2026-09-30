@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	accrualapp "diplom/internal/application/accrual"
 	"diplom/internal/domain/order"
 	"diplom/internal/infrastructure/postgres"
 )
@@ -133,6 +134,39 @@ func TestListOrdersIntegration(t *testing.T) {
 		parsedTime, err := time.Parse(time.RFC3339, items[0].UploadedAt)
 		if err != nil || strings.Contains(items[0].UploadedAt, ".") || !parsedTime.Equal(stored.UploadedAt().Truncate(time.Second)) {
 			t.Errorf("uploaded_at = %q, parse error = %v; want persisted upload time %s in RFC3339 without fractional seconds", items[0].UploadedAt, err, stored.UploadedAt())
+		}
+	})
+
+	t.Run("processed order without accrual has no accrual key", func(t *testing.T) {
+		credentials := orderCredentials(t, router, "/api/user/register", "dave")
+		dave, err := postgres.NewUserRepository(pool).GetByLogin(ctx, "dave")
+		if err != nil {
+			t.Fatal(err)
+		}
+		const number = "79927398713"
+		if err := repository.Add(ctx, newOrder(t, number, dave.ID(), uploadedAt)); err != nil {
+			t.Fatal(err)
+		}
+		update := accrualapp.Update{
+			Number:      order.Number(number),
+			Status:      order.StatusProcessed,
+			Backoff:     accrualapp.BackoffShort,
+			NextCheckAt: uploadedAt,
+		}
+		if err := postgres.NewAccrualRepository(pool).Save(ctx, update); err != nil {
+			t.Fatal(err)
+		}
+		response := getOrders(credentials.Header().Get("Authorization"))
+		items := decodeListedOrders(t, response)
+		if len(items) != 1 || items[0].Number != number || items[0].Status != order.StatusProcessed {
+			t.Fatalf("order list = %s; want only %s with status PROCESSED", response.Body.String(), number)
+		}
+		var raw []map[string]json.RawMessage
+		if err := json.Unmarshal(response.Body.Bytes(), &raw); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := raw[0]["accrual"]; present {
+			t.Fatalf("order JSON = %s, want no accrual key", response.Body.String())
 		}
 	})
 }

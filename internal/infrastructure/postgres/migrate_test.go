@@ -265,7 +265,7 @@ func TestMigrateConvertsAccrualToNumericWithoutChangingExistingOrders(t *testing
 
 func assertGooseVersions(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	for _, version := range []int{1, 2, 3, 4} {
+	for _, version := range []int{1, 2, 3, 4, 5} {
 		var records, applied int
 		if err := pool.QueryRow(ctx,
 			"SELECT count(*), count(*) FILTER (WHERE is_applied) FROM goose_db_version WHERE version_id = $1", version,
@@ -337,5 +337,92 @@ func assertAccrualSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 	}
 	if dataType != wantAccrualType {
 		t.Fatalf("orders.accrual data_type = %q, want %q", dataType, wantAccrualType)
+	}
+}
+
+func TestMigrateAddsAccrualPollingAndRollsBackToVersion4(t *testing.T) {
+	pool := isolatedDatabase(t)()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	db := stdlib.OpenDBFromPool(pool)
+	defer db.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, os.DirFS("migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 4); err != nil {
+		t.Fatalf("create version 4 schema: %v", err)
+	}
+	owner := registerOrderOwner(t, pool, "polling-owner")
+	uploadedAt := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	seedOrder(t, pool, "12345678903", owner, domain.StatusNew, nil, uploadedAt)
+	seedOrder(t, pool, "79927398713", owner, domain.StatusProcessed, floatPtr(500.25), uploadedAt)
+
+	if err := postgres.Migrate(ctx, pool); err != nil {
+		t.Fatalf("upgrade to polling schema: %v", err)
+	}
+	assertGooseVersions(t, ctx, pool)
+	assertPollingSchema(t, ctx, pool, true)
+	var missing, nonZero, notLong int
+	if err := pool.QueryRow(ctx,
+		"SELECT count(*) FILTER (WHERE next_check_at IS NULL), count(*) FILTER (WHERE check_attempts <> 0), count(*) FILTER (WHERE check_backoff IS DISTINCT FROM 'long') FROM orders",
+	).Scan(&missing, &nonZero, &notLong); err != nil {
+		t.Fatal(err)
+	}
+	if missing != 0 || nonZero != 0 || notLong != 0 {
+		t.Fatalf("migrated orders: %d without next_check_at, %d with nonzero check_attempts, %d without long check_backoff", missing, nonZero, notLong)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE orders SET check_backoff = 'short' WHERE number = '12345678903'"); err != nil {
+		t.Fatalf("set short check_backoff: %v", err)
+	}
+	for _, invalid := range []string{"medium", "SHORT", ""} {
+		if _, err := pool.Exec(ctx, "UPDATE orders SET check_backoff = $1 WHERE number = '12345678903'", invalid); err == nil {
+			t.Fatalf("check_backoff %q was accepted", invalid)
+		}
+	}
+
+	if _, err := provider.DownTo(ctx, 4); err != nil {
+		t.Fatalf("roll back to version 4: %v", err)
+	}
+	assertPollingSchema(t, ctx, pool, false)
+	repository := postgres.NewOrderRepository(pool)
+	pending, err := repository.GetByNumber(ctx, "12345678903")
+	if err != nil || pending.Status() != domain.StatusNew {
+		t.Fatalf("pending order after rollback = %+v, %v", pending, err)
+	}
+	processed, err := repository.GetByNumber(ctx, "79927398713")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accrual, present := processed.Accrual(); processed.Status() != domain.StatusProcessed || !present || accrual != 500.25 {
+		t.Fatalf("processed order after rollback = %+v", processed)
+	}
+
+	if err := postgres.Migrate(ctx, pool); err != nil {
+		t.Fatalf("re-apply migrations: %v", err)
+	}
+	assertGooseVersions(t, ctx, pool)
+	assertPollingSchema(t, ctx, pool, true)
+}
+
+func assertPollingSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool, want bool) {
+	t.Helper()
+	var columns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'orders' AND column_name IN ('next_check_at', 'check_attempts', 'check_backoff')`,
+	).Scan(&columns); err != nil {
+		t.Fatal(err)
+	}
+	var index *string
+	if err := pool.QueryRow(ctx, "SELECT to_regclass('orders_pending_next_check_idx')::text").Scan(&index); err != nil {
+		t.Fatal(err)
+	}
+	wantColumns := 0
+	if want {
+		wantColumns = 3
+	}
+	if columns != wantColumns || (index != nil) != want {
+		t.Fatalf("polling columns = %d, index present = %t, want %d and %t", columns, index != nil, wantColumns, want)
 	}
 }
