@@ -1,0 +1,5 @@
+# Copy this file to config.yaml in the working directory, or pass -c <path>.
+# Priority: non-empty environment variables > explicit flags > YAML > defaults.
+run_address: "localhost:8080"
+database_uri: "postgresql://postgres:postgres@localhost:5432/gophermart?sslmode=disable"
+accrual_system_address: "http://localhost:8081"
