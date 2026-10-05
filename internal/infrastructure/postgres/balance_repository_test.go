@@ -241,7 +241,7 @@ func TestBalanceRepositoryWithdrawLongNumberPersists(t *testing.T) {
 	owner := registerOrderOwner(t, pool, "long-number-owner")
 	seedOrder(t, pool, "12345678903", owner, orderdomain.StatusProcessed, floatPtr(100), uploadedAt)
 
-	number := longValidOrderNumber(t, 100000)
+	number := longValidOrderNumber(t, orderdomain.MaxNumberLength)
 	if err := repository.Withdraw(ctx, mustNewWithdrawal(t, number, owner, mustParseSum(t, "10"), uploadedAt)); err != nil {
 		t.Fatal(err)
 	}

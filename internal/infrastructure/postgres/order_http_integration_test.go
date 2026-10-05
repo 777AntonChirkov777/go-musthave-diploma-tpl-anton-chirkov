@@ -116,7 +116,7 @@ func TestOrderSubmissionIntegration(t *testing.T) {
 
 	// A number is stored as text, including leading zeros and digits beyond any
 	// integer representation. Adding zeros on the left preserves the checksum.
-	longNumber := strings.Repeat("0", 100000) + number
+	longNumber := strings.Repeat("0", order.MaxNumberLength-len(number)) + number
 	response = orderRequest(router, aliceAuthorization, "text/plain; charset=utf-8", longNumber)
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("long order status = %d, body = %q; want 202", response.Code, response.Body.String())
@@ -127,6 +127,13 @@ func TestOrderSubmissionIntegration(t *testing.T) {
 	}
 	if string(longOrder.Number()) != longNumber {
 		t.Fatalf("persisted long number = %q, want %q", longOrder.Number(), longNumber)
+	}
+	assertOrderCount(t, pool, 3)
+
+	tooLongNumber := "0" + longNumber
+	response = orderRequest(router, aliceAuthorization, "text/plain", tooLongNumber)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("too long order status = %d, body = %q; want 422", response.Code, response.Body.String())
 	}
 	assertOrderCount(t, pool, 3)
 }

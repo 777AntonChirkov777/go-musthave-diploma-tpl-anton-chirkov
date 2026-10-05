@@ -4,10 +4,12 @@ import "errors"
 
 type Number string
 
-var ErrInvalidNumber = errors.New("order number must contain digits and pass the Luhn check")
+const MaxNumberLength = 255
+
+var ErrInvalidNumber = errors.New("order number must contain 1 to 255 digits and pass the Luhn check")
 
 func ParseNumber(value string) (Number, error) {
-	if value == "" {
+	if value == "" || len(value) > MaxNumberLength {
 		return "", ErrInvalidNumber
 	}
 

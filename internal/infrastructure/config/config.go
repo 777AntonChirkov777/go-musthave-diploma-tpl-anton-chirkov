@@ -24,8 +24,6 @@ type Config struct {
 	AccrualSystemAddress string `yaml:"accrual_system_address"`
 }
 
-// Load reads defaults, YAML, explicit flags, and non-empty environment variables,
-// in increasing order of priority. The default YAML file is optional.
 func Load(args []string) (Config, error) {
 	var flagConfig Config
 	var configPath string
@@ -49,15 +47,6 @@ func Load(args []string) (Config, error) {
 	if err := loadFile(configPath, explicitFlags["c"], &cfg); err != nil {
 		return Config{}, err
 	}
-	if explicitFlags["a"] {
-		cfg.RunAddress = flagConfig.RunAddress
-	}
-	if explicitFlags["d"] {
-		cfg.DatabaseURI = flagConfig.DatabaseURI
-	}
-	if explicitFlags["r"] {
-		cfg.AccrualSystemAddress = flagConfig.AccrualSystemAddress
-	}
 	if value := os.Getenv("RUN_ADDRESS"); value != "" {
 		cfg.RunAddress = value
 	}
@@ -66,6 +55,15 @@ func Load(args []string) (Config, error) {
 	}
 	if value := os.Getenv("ACCRUAL_SYSTEM_ADDRESS"); value != "" {
 		cfg.AccrualSystemAddress = value
+	}
+	if explicitFlags["a"] {
+		cfg.RunAddress = flagConfig.RunAddress
+	}
+	if explicitFlags["d"] {
+		cfg.DatabaseURI = flagConfig.DatabaseURI
+	}
+	if explicitFlags["r"] {
+		cfg.AccrualSystemAddress = flagConfig.AccrualSystemAddress
 	}
 	if strings.TrimSpace(cfg.DatabaseURI) == "" {
 		return Config{}, fmt.Errorf("invalid DATABASE_URI/-d/database_uri: PostgreSQL URI is required")

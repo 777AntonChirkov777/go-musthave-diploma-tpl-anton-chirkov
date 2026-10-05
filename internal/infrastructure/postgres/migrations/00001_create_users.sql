@@ -1,15 +1,15 @@
 -- +goose Up
 CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    login TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
+    id VARCHAR(32) NOT NULL PRIMARY KEY,
+    login VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(256) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT users_login_key UNIQUE (login)
 );
 
 CREATE TABLE IF NOT EXISTS user_sessions (
-    token_hash TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash VARCHAR(64) NOT NULL PRIMARY KEY,
+    user_id VARCHAR(32) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

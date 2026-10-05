@@ -339,7 +339,7 @@ func TestAccrualRepositoryHandlesLongNumbers(t *testing.T) {
 	pool := migratedOrderDatabase(t)
 	ctx := context.Background()
 	owner := registerOrderOwner(t, pool, "long-owner")
-	number := domain.Number(longValidOrderNumber(t, 100000))
+	number := domain.Number(longValidOrderNumber(t, domain.MaxNumberLength))
 	if err := postgres.NewOrderRepository(pool).Add(ctx, newOrder(t, string(number), owner, accrualNow)); err != nil {
 		t.Fatal(err)
 	}

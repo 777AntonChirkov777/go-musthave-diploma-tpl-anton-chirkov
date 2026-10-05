@@ -106,7 +106,7 @@ func TestOrderRepositoryLongNumbersAndListOrdering(t *testing.T) {
 	bob := registerOrderOwner(t, pool, "bob")
 	base := time.Now().UTC().Truncate(time.Microsecond)
 	// Non-repeating digits avoid TOAST compression hiding a btree key limit.
-	longNumber := longValidOrderNumber(t, 32768)
+	longNumber := longValidOrderNumber(t, domain.MaxNumberLength)
 	orders := []domain.Order{
 		newOrder(t, "12345678903", alice, base.Add(2*time.Second)),
 		newOrder(t, "0012345678903", alice, base),
