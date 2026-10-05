@@ -52,9 +52,19 @@ func TestLoadSources(t *testing.T) {
 			want:  config.Config{RunAddress: "flag.local:9100", DatabaseURI: "postgres://flag/db", AccrualSystemAddress: "http://flag.local:9101"},
 		},
 		{
-			name:  "environment overrides flags and file",
+			name:  "explicit flags override environment and file",
 			files: map[string]string{"config.yaml": yamlConfig},
 			args:  []string{"-a", "flag.local:9100", "-d", "postgres://flag/db", "-r", "http://flag.local:9101"},
+			env: map[string]string{
+				"RUN_ADDRESS":            "env.local:9200",
+				"DATABASE_URI":           "postgres://env/db",
+				"ACCRUAL_SYSTEM_ADDRESS": "http://env.local:9201",
+			},
+			want: config.Config{RunAddress: "flag.local:9100", DatabaseURI: "postgres://flag/db", AccrualSystemAddress: "http://flag.local:9101"},
+		},
+		{
+			name:  "environment overrides file",
+			files: map[string]string{"config.yaml": yamlConfig},
 			env: map[string]string{
 				"RUN_ADDRESS":            "env.local:9200",
 				"DATABASE_URI":           "postgres://env/db",
@@ -63,11 +73,33 @@ func TestLoadSources(t *testing.T) {
 			want: config.Config{RunAddress: "env.local:9200", DatabaseURI: "postgres://env/db", AccrualSystemAddress: "http://env.local:9201"},
 		},
 		{
+			name: "environment overrides default flag value",
+			env:  map[string]string{"RUN_ADDRESS": "env.local:9200", "DATABASE_URI": "postgres://env/db"},
+			want: config.Config{RunAddress: "env.local:9200", DatabaseURI: "postgres://env/db"},
+		},
+		{
 			name:  "each field resolves its own source",
 			files: map[string]string{"config.yaml": yamlConfig},
 			args:  []string{"-d", "postgres://flag/db"},
-			env:   map[string]string{"RUN_ADDRESS": "env.local:9200"},
+			env:   map[string]string{"RUN_ADDRESS": "env.local:9200", "DATABASE_URI": "postgres://env/db"},
 			want:  config.Config{RunAddress: "env.local:9200", DatabaseURI: "postgres://flag/db", AccrualSystemAddress: "http://file.local:9001"},
+		},
+		{
+			name:  "empty explicit flag overrides environment",
+			files: map[string]string{"config.yaml": yamlConfig},
+			args:  []string{"-r="},
+			env:   map[string]string{"ACCRUAL_SYSTEM_ADDRESS": "http://env.local:9201"},
+			want:  config.Config{RunAddress: "file.local:9000", DatabaseURI: "postgres://file/db"},
+		},
+		{
+			name:  "empty environment falls back to file",
+			files: map[string]string{"config.yaml": yamlConfig},
+			env: map[string]string{
+				"RUN_ADDRESS":            "",
+				"DATABASE_URI":           "",
+				"ACCRUAL_SYSTEM_ADDRESS": "",
+			},
+			want: fromFile,
 		},
 		{
 			name:  "empty explicit flag clears optional file value",
@@ -128,9 +160,14 @@ func TestLoadSources(t *testing.T) {
 		{
 			name:  "address validation follows environment override",
 			files: map[string]string{"config.yaml": "run_address: invalid\n"},
-			args:  []string{"-a", "also-invalid"},
 			env:   map[string]string{"RUN_ADDRESS": "env.local:9200", "DATABASE_URI": "postgres://env/db"},
 			want:  config.Config{RunAddress: "env.local:9200", DatabaseURI: "postgres://env/db"},
+		},
+		{
+			name: "address validation follows flag override of environment",
+			args: []string{"-a", "flag.local:9100"},
+			env:  map[string]string{"RUN_ADDRESS": "also-invalid", "DATABASE_URI": "postgres://env/db"},
+			want: config.Config{RunAddress: "flag.local:9100", DatabaseURI: "postgres://env/db"},
 		},
 		{
 			name:  "database validation follows flag override",
@@ -141,7 +178,6 @@ func TestLoadSources(t *testing.T) {
 		{
 			name:  "database validation follows environment override",
 			files: map[string]string{"config.yaml": "database_uri: ''\n"},
-			args:  []string{"-d="},
 			env:   map[string]string{"DATABASE_URI": "postgres://env/db"},
 			want:  defaults,
 		},
@@ -165,9 +201,10 @@ func TestLoadSources(t *testing.T) {
 
 func TestLoadRejectsInvalidInput(t *testing.T) {
 	tests := []struct {
-		name  string
-		files map[string]string
-		args  []string
+		name       string
+		files      map[string]string
+		args       []string
+		runAddress string
 	}{
 		{name: "missing explicit config", args: []string{"-c", "missing.yaml"}},
 		{name: "missing explicitly selected default config", args: []string{"-c", "config.yaml"}},
@@ -181,11 +218,14 @@ func TestLoadRejectsInvalidInput(t *testing.T) {
 		{name: "multiple YAML documents", files: map[string]string{"config.yaml": "run_address: 'localhost:8080'\n---\ndatabase_uri: 'postgres://file/db'\n"}},
 		{name: "invalid file address", files: map[string]string{"config.yaml": "run_address: invalid\n"}},
 		{name: "empty explicit address overrides file", files: map[string]string{"config.yaml": "run_address: 'localhost:8080'\n"}, args: []string{"-a="}},
+		{name: "invalid explicit address overrides environment", args: []string{"-a", "also-invalid"}, runAddress: "env.local:9200"},
+		{name: "empty explicit address overrides environment", args: []string{"-a="}, runAddress: "env.local:9200"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			prepareConfig(t, tt.files)
 			t.Setenv("DATABASE_URI", "postgres://test/db")
+			t.Setenv("RUN_ADDRESS", tt.runAddress)
 			if _, err := config.Load(tt.args); err == nil {
 				t.Fatal("Load() succeeded, want an error")
 			}
@@ -207,7 +247,9 @@ func TestLoadRequiresDatabaseURI(t *testing.T) {
 		{name: "whitespace file URI", files: map[string]string{"config.yaml": "database_uri: '   '\n"}},
 		{name: "null file URI", files: map[string]string{"config.yaml": "database_uri: null\n"}},
 		{name: "empty flag overrides file URI", files: map[string]string{"config.yaml": "database_uri: 'postgres://file/db'\n"}, args: []string{"-d="}},
-		{name: "whitespace environment overrides flag and file", files: map[string]string{"config.yaml": "database_uri: 'postgres://file/db'\n"}, args: []string{"-d", "postgres://flag/db"}, env: " \t\n"},
+		{name: "whitespace environment overrides file", files: map[string]string{"config.yaml": "database_uri: 'postgres://file/db'\n"}, env: " \t\n"},
+		{name: "empty explicit flag overrides environment", args: []string{"-d="}, env: "postgres://env/db"},
+		{name: "whitespace explicit flag overrides environment and file", files: map[string]string{"config.yaml": "database_uri: 'postgres://file/db'\n"}, args: []string{"-d", " \t\n"}, env: "postgres://env/db"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

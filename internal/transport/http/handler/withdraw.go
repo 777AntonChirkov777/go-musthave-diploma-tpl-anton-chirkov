@@ -66,8 +66,9 @@ func (h *WithdrawHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusInternalServerError
 		switch {
 		case errors.Is(err, order.ErrInvalidNumber),
-			errors.Is(err, balance.ErrInvalidSum),
-			errors.Is(err, balance.ErrAlreadyWithdrawn):
+			errors.Is(err, balance.ErrInvalidSum):
+			status = http.StatusUnprocessableEntity
+		case errors.Is(err, balance.ErrAlreadyWithdrawn):
 			status = http.StatusUnprocessableEntity
 		case errors.Is(err, balance.ErrInsufficientFunds):
 			status = http.StatusPaymentRequired

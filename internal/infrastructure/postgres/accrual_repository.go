@@ -88,7 +88,7 @@ func (r *AccrualRepository) Save(ctx context.Context, update accrualapp.Update) 
 	hash := sha256.Sum256([]byte(update.Number))
 	if _, err := r.pool.Exec(ctx, `
 		UPDATE orders
-		SET status = $3::text, accrual = $4, check_attempts = $5, check_backoff = $7, next_check_at = $6
+		SET status = $3::text::order_status, accrual = $4, check_attempts = $5, check_backoff = $7, next_check_at = $6
 		WHERE number_hash = $1 AND number = $2
 		  AND status IN ('NEW', 'PROCESSING')
 		  AND NOT (status = 'PROCESSING' AND $3::text = 'NEW')`,

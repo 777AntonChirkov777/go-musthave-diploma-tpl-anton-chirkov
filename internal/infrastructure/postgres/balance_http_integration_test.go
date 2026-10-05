@@ -105,6 +105,18 @@ func TestBalanceHTTPIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("number longer than limit", func(t *testing.T) {
+		tooLong := zeroPrefixedLuhnNumber(order.MaxNumberLength + 1 - len(zeroPrefixedLuhnNumber(0)))
+		response := postWithdraw(router, aliceAuthorization, withdrawRequestBody(tooLong, "1.00"))
+		if response.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("too long number status = %d, body = %q; want 422", response.Code, response.Body.String())
+		}
+		payload := decodeBalance(t, getBalance(router, aliceAuthorization))
+		if payload.Current != 1500.50 || payload.Withdrawn != 0 {
+			t.Fatalf("balance after too long number = %+v, want unchanged current 1500.5 withdrawn 0", payload)
+		}
+	})
+
 	t.Run("insufficient funds", func(t *testing.T) {
 		response := postWithdraw(router, aliceAuthorization, withdrawRequestBody(insufficientAttempt, "2000.00"))
 		if response.Code != http.StatusPaymentRequired {
@@ -160,6 +172,17 @@ func TestBalanceHTTPIntegration(t *testing.T) {
 		payload := decodeBalance(t, getBalance(router, bobAuthorization))
 		if payload.Current != 80.00 || payload.Withdrawn != 20.00 {
 			t.Fatalf("bob balance after withdraw = %+v, want current 80 withdrawn 20", payload)
+		}
+	})
+
+	t.Run("exact repeat is not idempotent success", func(t *testing.T) {
+		response := postWithdraw(router, aliceAuthorization, withdrawRequestBody(withdrawA, "751.00"))
+		if response.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("exact repeat status = %d, body = %q; want 422", response.Code, response.Body.String())
+		}
+		payload := decodeBalance(t, getBalance(router, aliceAuthorization))
+		if payload.Current != 449.00 || payload.Withdrawn != 1051.50 {
+			t.Fatalf("balance after exact repeat = %+v, want current 449 withdrawn 1051.5", payload)
 		}
 	})
 
